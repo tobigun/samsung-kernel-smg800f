@@ -378,8 +378,8 @@ static void cm36686_gpio_init(void)
 static struct cm36686_platform_data cm36686_pdata = {
 	.cm36686_led_on = proxi_led_power,
 	.irq = GPIO_PROXI_INT,
-	.default_hi_thd = 11,
-	.default_low_thd = 7,
+	.default_hi_thd = 14,
+	.default_low_thd = 9,
 	.cancel_hi_thd = 10,
 	.cancel_low_thd = 5,
 };

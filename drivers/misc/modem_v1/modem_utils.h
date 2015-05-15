@@ -113,7 +113,7 @@ struct __packed utc_time {
 #define HMSU_FMT	"[%02d:%02d:%02d.%06d]"
 
 #define evt_log(fmt, ...) \
-	pr_err(LOG_TAG pr_fmt(fmt), ##__VA_ARGS__)
+	printk_ratelimited(KERN_ERR LOG_TAG pr_fmt(fmt), ##__VA_ARGS__)
 
 static inline unsigned long ns2us(unsigned long ns)
 {

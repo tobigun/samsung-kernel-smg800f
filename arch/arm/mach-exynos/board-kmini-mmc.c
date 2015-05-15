@@ -176,6 +176,9 @@ static struct dw_mci_board smdk4270_dwmci0_pdata __initdata = {
 	.only_once_tune	= true,
 	.cfg_gpio		= exynos_dwmci0_cfg_gpio,
 	.get_bus_wd		= exynos_dwmci0_get_bus_wd,
+	.save_drv_st		= exynos_dwmci_save_drv_st,
+	.restore_drv_st		= exynos_dwmci_restore_drv_st,
+	.tuning_drv_st		= exynos_dwmci_tuning_drv_st,
 	.set_power		= exynos_dwmci0_set_power,
 	.sdr_timing		= 0x03020000,
 	.ddr_timing		= 0x03030002,
@@ -183,6 +186,10 @@ static struct dw_mci_board smdk4270_dwmci0_pdata __initdata = {
 	.cd_type		= DW_MCI_CD_PERMANENT,
 	.ddr200_timing		= 0x01040002,
 	.clk_tbl		= exynos_dwmci_clk_rates,
+	.__drv_st		= {
+		.pin		= EXYNOS4_GPK0(0),
+		.val		= S5P_GPIO_DRVSTR_LV3,
+	},
 	.qos_int_level		= 200 * 1000,
 	.ignore_phase		= (1 << 7),
 #if defined(CONFIG_MMC_DW_CMD_LOGGING)

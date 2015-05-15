@@ -154,7 +154,7 @@
 #define CY_REQUEST_EXCLUSIVE_TIMEOUT 500
 #define CY_REQUEST_EXCLUSIVE_TIMEOUT_GET_PARAM 1000
 #define CY_REQUEST_EXCLUSIVE_TIMEOUT_SET_PARAM 2000
-#define CY_WATCHDOG_TIMEOUT         1000
+#define CY_WATCHDOG_TIMEOUT         3000
 #define CY_WATCHDOG_REQUEST_EXCLUSIVE_TIMEOUT 6000
 #define CY_WATCHDOG_RETRY 3
 #define CY_CORE_RESET_AND_WAIT_TIMEOUT		500
@@ -870,6 +870,7 @@ struct cyttsp5_samsung_factory_data {
 
 	bool probe_done;
 	bool suspended;
+	bool is_inputmethod;
 };
 #endif
 

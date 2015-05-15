@@ -130,7 +130,11 @@ static unsigned int exynos4270_dram_parameter_rev[] = {
 static unsigned int exynos4270_dram_parameter_rev2[] = {
 	0x545A96D3,	/* 400Mhz */
 	0x3847748D,	/* 266Mhz */
-	0x2A35538A,	/* 200Mhz */
+#if defined(CONFIG_MACH_DEGAS) || defined(CONFIG_MACH_KMINI)
+	0x2A36538A,	/* 200Mhz */
+#else
+	0x2A35538A,     /* 200Mhz */
+#endif
 };
 
 static unsigned int exynos4270_dram_data_parameter[] = {
@@ -140,9 +144,15 @@ static unsigned int exynos4270_dram_data_parameter[] = {
 };
 
 static unsigned int exynos4270_dram_power_parameter[] = {
-	0x5058033A,	/* 400Mhz */
-	0x383B033A,	/* 266Mhz */
-	0x282C033A,	/* 200Mhz */
+#if defined(CONFIG_MACH_DEGAS) || defined(CONFIG_MACH_KMINI)
+	0x50A4033A,	/* 400Mhz */
+	0x386E033A,	/* 266Mhz */
+	0x2852033A,	/* 200Mhz */
+#else
+	0x5058033A,     /* 400Mhz */
+	0x383B033A,     /* 266Mhz */
+	0x282C033A,     /* 200Mhz */
+#endif
 };
 #endif
 

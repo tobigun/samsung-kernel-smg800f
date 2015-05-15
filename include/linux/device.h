@@ -24,6 +24,7 @@
 #include <linux/pm.h>
 #include <linux/atomic.h>
 #include <asm/device.h>
+#include <linux/ratelimit.h>
 
 struct device;
 struct device_private;

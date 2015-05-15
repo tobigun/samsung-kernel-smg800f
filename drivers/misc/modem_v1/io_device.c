@@ -1358,6 +1358,7 @@ static ssize_t misc_write(struct file *filp, const char __user *data,
 	if (ret < 0) {
 		mif_err("%s->%s: ERR! %s->send fail:%d (tx_bytes:%d len:%d)\n",
 			iod->name, mc->name, ld->name, ret, tx_bytes, count);
+		dev_kfree_skb_any(skb);
 		return ret;
 	}
 
@@ -1451,21 +1452,20 @@ static int vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 	struct io_device *iod = vnet->iod;
 	struct link_device *ld = get_current_link(iod);
 	struct modem_ctl *mc = iod->mc;
-	struct sk_buff *skb_new;
+	struct sk_buff *skb_new = skb;
 	int ret;
 	unsigned int headroom;
 	unsigned int tailroom;
 	unsigned int count;
 	unsigned int tx_bytes;
-	struct iphdr *ip_header = NULL;
 	char *buff;
 	u8 cfg;
 
 	if (unlikely(!cp_online(mc))) {
 		if (!netif_queue_stopped(ndev))
 			netif_stop_queue(ndev);
-		dev_kfree_skb_any(skb);
-		return NETDEV_TX_BUSY;
+		/* just drop the tx packet and return tx_ok */
+		goto drop;
 	}
 
 	/* When use `handover' with Network Bridge,
@@ -1495,11 +1495,9 @@ static int vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 	if (skb_headroom(skb) < headroom || skb_tailroom(skb) < tailroom) {
 		mif_debug("%s: skb_copy_expand needed\n", iod->name);
 		skb_new = skb_copy_expand(skb, headroom, tailroom, GFP_ATOMIC);
-		/* skb_copy_expand success or not, free old skb from caller */
-		dev_kfree_skb_any(skb);
 		if (!skb_new) {
 			mif_info("%s: ERR! skb_copy_expand fail\n", iod->name);
-			return NETDEV_TX_BUSY;
+			goto retry;
 		}
 	} else {
 		skb_new = skb;
@@ -1510,11 +1508,12 @@ static int vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 	sipc5_build_header(iod, ld, buff, cfg, 0, count);
 
 	/* IP loop-back */
-	ip_header = (struct iphdr *)skb->data;
-	if (iod->msd->loopback_ipaddr &&
-		ip_header->daddr == iod->msd->loopback_ipaddr) {
-		swap(ip_header->saddr, ip_header->daddr);
-		buff[SIPC5_CH_ID_OFFSET] = DATA_LOOPBACK_CHANNEL;
+	if (iod->msd->loopback_ipaddr) {
+		struct iphdr *ip_header = (struct iphdr *)skb->data;
+		if (ip_header->daddr == iod->msd->loopback_ipaddr) {
+			swap(ip_header->saddr, ip_header->daddr);
+			buff[SIPC5_CH_ID_OFFSET] = DATA_LOOPBACK_CHANNEL;
+		}
 	}
 
 	if (tailroom)
@@ -1524,12 +1523,14 @@ static int vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 	skbpriv(skb_new)->ld = ld;
 
 	ret = ld->send(ld, iod, skb_new);
-	if (ret < 0) {
-		mif_err("%s->%s: ERR! %s->send fail:%d (tx_bytes:%d len:%d)\n",
-			iod->name, mc->name, ld->name, ret, tx_bytes, count);
-		if (!netif_queue_stopped(ndev))
-			netif_stop_queue(ndev);
-		return NETDEV_TX_BUSY;
+	if (unlikely(ret < 0)) {
+		if (ret != -EBUSY) {
+			mif_err_limited("%s->%s: ERR! %s->send fail:%d "\
+					"(tx_bytes:%d len:%d)\n",
+					iod->name, mc->name, ld->name,
+					ret, tx_bytes, count);
+		}
+		goto drop;
 	}
 
 	if (ret != tx_bytes) {
@@ -1540,6 +1541,31 @@ static int vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 	ndev->stats.tx_packets++;
 	ndev->stats.tx_bytes += count;
 
+	/*
+	If @skb has been expanded to $skb_new, @skb must be freed here.
+	($skb_new will be freed by the link device.)
+	*/
+	if (skb_new != skb)
+		dev_kfree_skb_any(skb);
+	return NETDEV_TX_OK;
+
+retry:
+	/*
+	If @skb has been expanded to $skb_new, only $skb_new must be freed here
+	because @skb will be reused by NET_TX.
+	*/
+	if (skb_new && skb_new != skb)
+		dev_kfree_skb_any(skb_new);
+	return NETDEV_TX_BUSY;
+
+drop:
+	ndev->stats.tx_dropped++;
+	dev_kfree_skb_any(skb);
+	/*
+	If @skb has been expanded to $skb_new, $skb_new must also be freed here.
+	*/
+	if (skb_new != skb)
+		dev_kfree_skb_any(skb_new);
 	return NETDEV_TX_OK;
 }
 

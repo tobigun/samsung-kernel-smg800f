@@ -71,11 +71,12 @@ void stop_tx_flow_ctrl(struct mem_link_device *mld, struct mem_ipc_device *dev)
 	spin_lock_irqsave(&dev->txq.lock, flags);
 
 	atomic_set(&dev->txq.busy, 0);
+	dev->req_ack_cnt[TX] = 0;
 
 	spin_unlock_irqrestore(&dev->txq.lock, flags);
 
 	if (dev->id == IPC_RAW && cp_online(mc))
-		resume_net_ifaces(&mld->link_dev);
+		resume_net_ifaces(ld);
 }
 
 int under_tx_flow_ctrl(struct mem_link_device *mld, struct mem_ipc_device *dev)
@@ -113,7 +114,7 @@ int check_tx_flow_ctrl(struct mem_link_device *mld, struct mem_ipc_device *dev)
 	if (txq_empty(dev)) {
 #ifdef DEBUG_MODEM_IF_FLOW_CTRL
 		if (cp_online(mc)) {
-			mif_err("%s->%s: %s_TXQ: No RES_ACK, but EMPTY "\
+			mif_debug("%s->%s: %s_TXQ: No RES_ACK, but EMPTY "\
 				"(busy_cnt %d)\n", ld->name, mc->name,
 				dev->name, busy_count);
 		}

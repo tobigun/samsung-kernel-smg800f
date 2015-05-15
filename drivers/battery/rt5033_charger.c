@@ -26,6 +26,7 @@
 
 #define ENABLE_MIVR 0
 
+#define EN_BAD_ADP_IRQ	1
 #define EN_OVP_IRQ 1
 #define EN_IEOC_IRQ 1
 #define EN_RECHG_REQ_IRQ 0
@@ -39,6 +40,8 @@
 
 #define EOC_SLEEP 200
 #define EOC_TIMEOUT (EOC_SLEEP * 6)
+/* 9.9 second */
+#define BADADP_RESTART_TIMER	(9900)
 #ifndef EN_TEST_READ
 #define EN_TEST_READ 0
 #endif
@@ -76,6 +79,9 @@ typedef struct rt5033_charger_data {
 		int unhealth_cnt;
 	struct workqueue_struct *wq;
 	struct delayed_work eoc_timeout_work;
+#if EN_BAD_ADP_IRQ
+	struct delayed_work activate_bad_adp_work;
+#endif /* EN_BAD_ADP_IRQ */
         int status;
 #ifdef CONFIG_FLED_RT5033
         struct rt_fled_info *fled_info;
@@ -163,12 +169,11 @@ static void rt5033_charger_otg_control(struct rt5033_charger_data *charger,
 static void rt5033_enable_charger_switch(struct rt5033_charger_data *charger,
                 int onoff)
 {
-        int prev_charging_status = charger->is_charging;
         struct i2c_client *iic = charger->rt5033->i2c_client;
 	union power_supply_propval val;
 
         charger->is_charging = onoff ? true : false;
-        if ((onoff > 0) && (prev_charging_status == false)) {
+        if (onoff) {
 		pr_info("%s: turn on charger\n", __func__);
 #ifdef CONFIG_FLED_RT5033
                 if (charger->fled_info == NULL)
@@ -184,8 +189,9 @@ static void rt5033_enable_charger_switch(struct rt5033_charger_data *charger,
 
                 rt5033_set_bits(iic, RT5033_EOC_CTRL, RT5033_EOC_RESET_MASK);
                 rt5033_clr_bits(iic, RT5033_EOC_CTRL, RT5033_EOC_RESET_MASK);
-
-        } else if (onoff == 0) {
+		/* Set Reg0x07[5] = 0 -> enable bad adaptor detection */
+		rt5033_clr_bits(iic, RT5033_EOC_CTRL, (1 << 5));
+	} else {
 		psy_do_property("battery", get,
 				POWER_SUPPLY_PROP_STATUS, val);
 		if (val.intval != POWER_SUPPLY_STATUS_FULL)
@@ -200,9 +206,6 @@ static void rt5033_enable_charger_switch(struct rt5033_charger_data *charger,
                         rt5033_charger_notification(charger->fled_info, 0);
 #endif /* CONFIG_FLED_RT5033 */
                 rt5033_set_bits(iic, RT5033_CHG_STAT_CTRL, RT5033_CHGENB_MASK);
-        } else {
-                pr_info("%s: repeated to set charger switch(%d), prev stat = %d\n",
-                                __func__, onoff, prev_charging_status ? 1 : 0);
         }
 }
 
@@ -228,12 +231,14 @@ static int rt5033_input_current_limit[] = {
 
 static int __r5033_current_limit_to_setting(int current_limit)
 {
-        int i = 0;
+	u8 i = 0;
 
         for (i = 0; i < ARRAY_SIZE(rt5033_input_current_limit); i++) {
                 if (current_limit <= rt5033_input_current_limit[i])
                         return i+1;
         }
+	if (current_limit > rt5033_input_current_limit[i-1])
+		return 0;
 
         return -EINVAL;
 }
@@ -556,6 +561,9 @@ static bool rt5033_chg_init(struct rt5033_charger_data *charger)
                         RT5033_CHG_CTRL4, RT5033_MIVR_MASK,
                         RT5033_MIVR_DISABLE << RT5033_MIVR_SHIFT);
 #endif
+	/* Set Reg0x07[5] = 0 -> enable bad adaptor detection */
+	rt5033_clr_bits(charger->rt5033->i2c_client,
+				RT5033_EOC_CTRL, (1 << 5));
         return true;
 }
 
@@ -574,6 +582,14 @@ static int rt5033_get_charging_status(struct rt5033_charger_data *charger)
             pr_info("Error : can't get charging status (%d)\n", ret);
 
         }
+
+	if (charger->is_charging && (ret & 0x1)) {
+		rt5033_clr_bits(charger->rt5033->i2c_client,
+				RT5033_CHG_STAT_CTRL, RT5033_CHGENB_MASK);
+		msleep(100);
+		ret = rt5033_reg_read(charger->rt5033->i2c_client,
+				RT5033_CHG_STAT_CTRL);
+	}
 
         if (charger->full_charged)
                 return POWER_SUPPLY_STATUS_FULL;
@@ -711,8 +727,7 @@ static int sec_chg_set_property(struct power_supply *psy,
                         /* val->intval : type */
         case POWER_SUPPLY_PROP_ONLINE:
                 charger->cable_type = val->intval;
-                if (charger->cable_type == POWER_SUPPLY_TYPE_BATTERY ||
-                                charger->cable_type == POWER_SUPPLY_TYPE_UNKNOWN) {
+                if (charger->cable_type == POWER_SUPPLY_TYPE_BATTERY) {
                         pr_info("%s:[BATT] Type Battery\n", __func__);
                         rt5033_enable_charger_switch(charger, 0);
 
@@ -725,6 +740,7 @@ static int sec_chg_set_property(struct power_supply *psy,
                         pr_info("%s:[BATT] Set charging"
                                         ", Cable type = %d\n", __func__, charger->cable_type);
                         /* Enable charger */
+			rt5033_charger_otg_control(charger, false);
                         rt5033_configure_charger(charger);
                 }
 #if EN_TEST_READ
@@ -850,6 +866,88 @@ struct rt5033_chg_irq_handler {
 	irqreturn_t (*handler)(int irq, void *data);
 };
 
+#if EN_BAD_ADP_IRQ
+static void rt5033chg_activate_bad_adp(
+				struct work_struct *work)
+{
+	rt5033_charger_data_t *charger =
+			container_of(to_delayed_work(work),
+					rt5033_charger_data_t,
+					activate_bad_adp_work);
+#if ENABLE_MIVR
+	/* Restore MIVR setting */
+	rt5033_set_mivr_level(charger);
+#endif
+	/* Set Reg0x07[5] = 0 -> enable bad adaptor detection */
+	rt5033_clr_bits(charger->rt5033->i2c_client,
+					RT5033_EOC_CTRL, (1 << 5));
+}
+static irqreturn_t rt5033_chg_bad_adp_irq_handler(int irq, void *data)
+{
+	struct rt5033_charger_data *info = data;
+	int cc;
+	bool disable_bad_adp_det = false;
+	cancel_delayed_work(&info->activate_bad_adp_work);
+
+	pr_info("%s : Bad adaptor : try to decrease charging current\n",
+						__func__);
+	cc = rt5033_get_fast_charging_current(info->rt5033->i2c_client);
+	if (cc >= 800)
+	{
+		cc -= 100;
+		pr_info("%s : Decrease fast charging current %d mA\n",
+						__func__, cc);
+		__rt5033_set_fast_charging_current(info->rt5033->i2c_client, cc);
+		disable_bad_adp_det = true;
+	}
+	else
+	{
+		cc = rt5033_reg_read(info->rt5033->i2c_client, RT5033_CHG_CTRL1);
+		cc = (cc & RT5033_AICR_LIMIT_MASK) >> RT5033_AICR_LIMIT_SHIFT;
+		if (cc == 0) /* unlimit */
+			cc = 0x08;
+		if (cc != 1)
+		{
+			cc -= 1;
+			pr_info("%s : Decrease AICR to 0x%02x (%d mA)\n",
+							__func__, cc,
+				rt5033_input_current_limit[cc - 1]);
+			rt5033_assign_bits(info->rt5033->i2c_client,
+					RT5033_CHG_CTRL1,
+					RT5033_AICR_LIMIT_MASK,
+					cc << RT5033_AICR_LIMIT_SHIFT);
+			disable_bad_adp_det = true;
+		}
+		else
+		{
+			cc = rt5033_get_fast_charging_current(info->rt5033->i2c_client);
+			pr_info("%s : Nothing can do! (cc = %d mA,",
+							__func__, cc);
+			cc = rt5033_reg_read(info->rt5033->i2c_client, RT5033_CHG_CTRL1);
+			cc = (cc & RT5033_AICR_LIMIT_MASK) >> RT5033_AICR_LIMIT_SHIFT;
+			pr_info("%s : aicr = %d mA)\n", __func__,
+					rt5033_input_current_limit[cc -1]);
+			pr_info("%s : set MIVR = 4400mV\n", __func__);
+			rt5033_assign_bits(info->rt5033->i2c_client,
+				RT5033_CHG_CTRL4, RT5033_MIVR_MASK,
+				RT5033_MIVR_4200MV << RT5033_MIVR_SHIFT);
+		}
+	}
+	if (disable_bad_adp_det) {
+		/* Use lower MIVR */
+		rt5033_assign_bits(info->rt5033->i2c_client,
+					RT5033_CHG_CTRL4, RT5033_MIVR_MASK,
+					RT5033_MIVR_4200MV << RT5033_MIVR_SHIFT);
+		/* Disable bad adaptor detection */
+		rt5033_set_bits(info->rt5033->i2c_client,
+					RT5033_EOC_CTRL, (1 << 5));
+		queue_delayed_work(info->wq,
+					&info->activate_bad_adp_work,
+					msecs_to_jiffies(BADADP_RESTART_TIMER));
+	}
+	return IRQ_HANDLED;
+}
+#endif /* EN_BAD_ADP_IRQ */
 #if EN_OVP_IRQ
 static irqreturn_t rt5033_chg_vin_ovp_irq_handler(int irq, void *data)
 {
@@ -954,6 +1052,13 @@ static irqreturn_t rt5033_chg_otp_tr_irq_handler(int irq, void *data)
 #endif
 
 const struct rt5033_chg_irq_handler rt5033_chg_irq_handlers[] = {
+#if EN_BAD_ADP_IRQ
+	{
+		.name = "BAD ADAPTOR",
+		.handler = rt5033_chg_bad_adp_irq_handler,
+		.irq_index = RT5033_ADPBAD_IRQ,
+	},
+#endif
 #if EN_OVP_IRQ
         {
                 .name = "VIN_OVP",
@@ -1186,6 +1291,10 @@ static int rt5033_charger_probe(struct platform_device *pdev)
 	charger->wq = create_workqueue("rt5033chg_workqueue");
 	INIT_DELAYED_WORK(&charger->eoc_timeout_work,
 				rt5033chg_eoc_timeout_reset);
+#if EN_BAD_ADP_IRQ
+	INIT_DELAYED_WORK(&charger->activate_bad_adp_work,
+				rt5033chg_activate_bad_adp);
+#endif /* EN_BAD_ADP_IRQ */
 	charger->rt5033 = chip;
 	if (pdev->dev.of_node) {
 		charger->pdata = devm_kzalloc(&pdev->dev, sizeof(*(charger->pdata)),

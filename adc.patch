@@ -1,0 +1,59 @@
+diff --git a/arch/arm/plat-samsung/adc.c b/arch/arm/plat-samsung/adc.c
+index 1ac1ce2..e6c92d5 100644
+--- a/arch/arm/plat-samsung/adc.c
++++ b/arch/arm/plat-samsung/adc.c
+@@ -268,7 +268,7 @@ static void s3c_adc_stop(struct s3c_adc_client *client)
+ 
+ 	spin_unlock_irqrestore(&adc_dev->lock, flags);
+ }
+-
++#if 0
+ static void s3c_convert_done(struct s3c_adc_client *client,
+ 			     unsigned v, unsigned u, unsigned *left)
+ {
+@@ -292,9 +292,10 @@ static int s3c_get_result(struct s3c_adc_client *client)
+ 
+ 	return result;
+ }
+-
++#endif
+ int s3c_adc_read(struct s3c_adc_client *client, unsigned int ch)
+ {
++#if 0
+ 	unsigned long flags;
+ 	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wake);
+ 	int ret;
+@@ -335,6 +336,8 @@ exit:
+ 	s3c_adc_hw_disable(adc_dev);
+ 
+ 	return ret;
++#endif
++	return 0;
+ }
+ EXPORT_SYMBOL_GPL(s3c_adc_read);
+ 
+@@ -388,6 +391,7 @@ EXPORT_SYMBOL_GPL(s3c_adc_release);
+ 
+ static irqreturn_t s3c_adc_irq(int irq, void *pw)
+ {
++#if 0
+ 	struct adc_device *adc = pw;
+ 	struct s3c_adc_client *client;
+ 	enum s3c_cpu_type cpu = platform_get_device_id(adc->pdev)->driver_data;
+@@ -452,7 +456,7 @@ exit:
+ 		writel(0, adc->regs + S3C64XX_ADCCLRINT);
+ 	else if (cpu == TYPE_ADCV5)
+ 		writel(1, adc->regs + SAMSUNG_ADC2_INT_STATUS);
+-
++#endif
+ 	return IRQ_HANDLED;
+ }
+ 
+@@ -620,6 +624,7 @@ static int s3c_adc_probe(struct platform_device *pdev)
+ 
+ 	adc_dev = adc;
+ 
++	s3c_adc_hw_enable(adc_dev);
+ 	return 0;
+ 
+  err_clk:

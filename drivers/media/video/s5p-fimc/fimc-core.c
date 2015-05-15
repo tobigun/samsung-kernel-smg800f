@@ -422,7 +422,7 @@ int fimc_prepare_addr(struct fimc_ctx *ctx, struct vb2_buffer *vb,
 	if (vb == NULL || frame == NULL)
 		return -EINVAL;
 
-	pix_size = frame->width * frame->height;
+	pix_size = frame->f_width * frame->f_height;
 
 	dbg("memplanes= %d, colplanes= %d, pix_size= %d",
 		frame->fmt->memplanes, frame->fmt->colplanes, pix_size);

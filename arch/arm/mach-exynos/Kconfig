@@ -1633,6 +1633,10 @@ menuconfig SEC_DEBUG
 	help
 	  Samsung TN Ramdump Feature. Use INFORM3 and magic number at 0xc0000000.
 
+config SAMSUNG_PRODUCT_SHIP
+	bool "set up for product shipping"
+	default n
+
 if SEC_DEBUG
 config SEC_DEBUG_SCHED_LOG
 	bool "Samsung Scheduler Logging Feature"

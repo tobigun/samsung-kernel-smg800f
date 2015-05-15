@@ -474,7 +474,9 @@ static inline void manage_touch_mode(struct cyttsp5_mt_data *md,
 
 	if (tch->abs[CY_TCH_E] == CY_EV_TOUCHDOWN) {
 		if ((!md->glove_enable && tch->abs[CY_TCH_O] == CY_OBJ_GLOVE) ||
-		    (md->glove_enable && tch->abs[CY_TCH_O] != CY_OBJ_GLOVE)) {
+		    (md->glove_enable &&
+				(tch->abs[CY_TCH_O] == CY_OBJ_STANDARD_FINGER ||
+				tch->abs[CY_TCH_O] == CY_OBJ_STYLUS))) {
 			md->glove_enable = !md->glove_enable;
 			tsp_debug_dbg(true, md->dev, "%s: ****** glove mode %s\n",
 				__func__, md->glove_enable ? "on " : "off");
